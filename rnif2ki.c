@@ -55,6 +55,8 @@ int getNetsNames(char *pointeur,NETS *tableNets);
 int getComposNames(char *pointeur,COMPOSANT *tableComposants);
 void initComposant(char *pointeur,int indexComposant,COMPOSANT *tableComposants);
 int strcpyBetweenChars(char *dest, const char *source, char Ch);
+int getToken(char *dest, const char *source);
+void testData(void);
 
 int main(int argc, char **argv)
 {
@@ -63,6 +65,7 @@ int main(int argc, char **argv)
 	int c,n,p,nombreCompos,nombreNets;
 	char buffer[FILELEN];
 	time_t t;
+	errno_t err;
 
 	if (argc!=3)
 	{
@@ -75,15 +78,15 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	Destination = fopen(argv[2],"w");
-	if (Destination==NULL)
+	err = fopen_s (&Destination, argv[2], "w");
+	if (err != 0L)
 	{
 		printf("Couldn't open: %s\n",argv[2]);
 		return -1;
 	}
 
-	Source = fopen(argv[1],"rb");
-	if (Source==NULL)
+	err = fopen_s(&Source, argv[1],"rb");
+	if (err != 0L)
 	{
 		printf("Couldn't open: %s\n",argv[1]);
 		fclose(Destination);
@@ -106,48 +109,123 @@ int main(int argc, char **argv)
 		   "\tNumber of components          (max.):\t%d\n"
 		   "\tPins per component            (max.):\t%d\n\n", FILELEN, NAMELEN, NETSMAX, COMPMAX, PINSMAX);
 
+//#define TEST
+#ifdef TEST
+	nombreCompos = 2;
+	nombreNets = 1;
+	testData();
+#else
 	// recupère le nom des composants/nets et les place dans le tableau
 	nombreCompos = getComposNames(buffer, tc);
 	nombreNets   = getNetsNames(  buffer, tn);
 
-	printf("%d components found\n" "%d nets found\n\n", nombreCompos, nombreNets);
-
 	// initialisation du tableau des composants
 
-	for (c=0; c<nombreCompos; c++) initComposant(buffer,c,&tc[0]);
+	for (c=0; c<nombreCompos; c++) 
+		initComposant(buffer,c,&tc[0]);
+#endif
+	printf("%d components found\n" "%d nets found\n\n", nombreCompos, nombreNets);
 
 	// Ecriture de la première partie du fichier kicad
 
     time(&t);
 
-	fprintf(Destination,"# EESchema Netlist Version 1.1 created  %s\n", ctime(&t));
-	fprintf(Destination,"(\n");
+	char buf[80];
+	ctime_s(buf, sizeof(buf), &t);
+	buf[strlen(buf)-1] = '\0';
 
-	for (c=0; c<nombreCompos; c++)
+	// header
+	fprintf(Destination, "(export (version D)\n");
+	fprintf(Destination, "  (design\n");
+	fprintf(Destination, "    (source \"%s\")\n", argv[2]);
+	fprintf(Destination, "    (date \"%s\")\n", buf);
+	fprintf(Destination, "    (tool \"rnif2ki v2\")\n");
+	fprintf(Destination, "  )\n");
+
+	/*
+	(components
+	(comp (ref P4)
+	(value LOWER_PINS)
+    (footprint RMC_pcb_header:pin_header_2.54mm_1x18)
+		(fields
+		(field (name populate) never))
+		(libsource (lib conn) (part CONN_01X18))
+	(sheetpath (names /) (tstamps /))
+	(tstamp 4E446864))
+	...
+	)
+	*/
+
+	fprintf(Destination, "  (components\n");
+	for (c = 0; c < nombreCompos; c++)
 	{
-		fprintf(Destination," ( %03d $noname %s %s\n",c+1, tc[c].nom, tc[c].label);
+		fprintf(Destination, "    (comp (ref %s)\n", tc[c].nom);
+		fprintf(Destination, "      (value \"%s\")\n", tc[c].label);
+		fprintf(Destination, "      (footprint Capacitors_SMD:C_0603)\n");
+		fprintf(Destination, "      (sheetpath (names /) (tstamps /))\n");
+		fprintf(Destination, "      (tstamp %X))\n", (unsigned int)t);
+	}
+	fprintf(Destination, "  )\n");
+
+/*
+	(libparts
+	(libpart (lib device) (part C)
+	(description "Condensateur non polarise")
+		(footprints
+		(fp SM*)
+		(fp C?)
+		(fp C1-1))
+	(fields
+	(field (name Reference) C)
+	(field (name Value) C)
+	(field (name Footprint) ~)
+	(field (name Datasheet) ~))
+	(pins
+	(pin (num 1) (name ~) (type passive))
+	(pin (num 2) (name ~) (type passive))))
+	...
+	)
+*/
+#if 0
+	fprintf(Destination, "  (libparts\n");
+	for (c = 0; c < nombreCompos; c++)
+	{
+		fprintf(Destination, "    (libpart (lib todo) (part todo)\n");
+		fprintf(Destination, "      (description \"todo\")\n");
+		fprintf(Destination, "      (fields\n");
+		fprintf(Destination, "        (field (name Reference) todo)\n", tc[c].nom);
+		fprintf(Destination, "        (field (name Value) todo)\n", tc[c].label);
+		fprintf(Destination, "        (field (name Footprint) ~)\n");
+		fprintf(Destination, "        (field (name Datasheet) ~))\n");
+		fprintf(Destination, "      (pins\n");
+
 		for (p = 0; p <= tc[c].pin_max; p++)
 		{
 			if (tc[c].pin[p].nom[0])
 			{
 				if (tc[c].pin[p].alias[0])
-					fprintf(Destination,"  (    %s %s )\n", tc[c].pin[p].alias, tc[c].pin[p].nom);
+					fprintf(Destination, "        (pin(num %s) (name ~) (type passive))\n", tc[c].pin[p].alias);
 				else
-					fprintf(Destination,"  (    %d %s )\n", p, tc[c].pin[p].nom);
+					fprintf(Destination, "        (pin(num %d) (name ~) (type passive))\n", p);
 			}
 		}
-		fprintf(Destination," )\n");
+		fprintf(Destination,"      ))\n");
 	}
+#endif
 
-	fprintf(Destination, ")\n");
+	// need libraries ?
+	fprintf(Destination, "  (libraries\n");
+	fprintf(Destination, "    (library(logical device)\n");
+	fprintf(Destination, "    (uri /usr/share/kicad/library/device.lib)))\n");
+
 
 	// Ecriture de la deuxxième partie du fichier kicad
 
-	fprintf(Destination, "*\n" "{ Pin List by Nets\n");
+	fprintf(Destination, "  (nets\n");
 
 	for (n=0; n<nombreNets; n++)
 	{
-		fprintf(Destination,"Net %d \"%s\"\n", n, tn[n].nom);
+		fprintf(Destination,"    (net (code %d) (name \"%s\")\n", n+1, tn[n].nom);
 
 		for (c=0; c<nombreCompos; c++)
 		{
@@ -156,20 +234,39 @@ int main(int argc, char **argv)
 				if (!strcmp(tc[c].pin[p].nom, tn[n].nom))
 				{
 					if (tc[c].pin[p].alias[0])
-						fprintf(Destination," %s %s\n",tc[c].nom, tc[c].pin[p].alias);
+						fprintf(Destination,"      (node (ref %s) (pin %s))\n", tc[c].nom, tc[c].pin[p].alias);
 					else
-						fprintf(Destination," %s %d\n",tc[c].nom, p);
+						fprintf(Destination,"      (node (ref %s) (pin %d))\n", tc[c].nom, p);
 				}
 			}
 		}
+		fprintf(Destination, "    )\n");
 	}
 
-	fprintf(Destination,"}\n");
-	fprintf(Destination,"#END\n");
+	fprintf(Destination,"))\n");
 
 	fclose(Destination);
 	fclose(Source);
 	return 0;
+}
+
+void testData(void)
+{
+	tc[0].pin_max = 2;
+	strcpy_s(tc[0].nom, NAMELEN, "R");
+	strcpy_s(tc[0].label, NAMELEN, "1k");
+	strcpy_s(tc[0].pin[0].alias, NAMELEN, "1");
+	strcpy_s(tc[0].pin[1].alias, NAMELEN, "2");
+	strcpy_s(tc[0].pin[1].nom, NAMELEN, "NET1");
+
+	tc[1].pin_max = 2;
+	strcpy_s(tc[1].nom, NAMELEN, "D");
+	strcpy_s(tc[1].label, NAMELEN, "1N4148");
+	strcpy_s(tc[1].pin[0].alias, NAMELEN, "1");
+	strcpy_s(tc[1].pin[0].nom, NAMELEN, "NET1");
+	strcpy_s(tc[1].pin[1].alias, NAMELEN, "2");
+
+	strcpy_s(tn[0].nom, NAMELEN, "NET1");
 }
 
 void initComposant(char *pointeur,int indexComposant,COMPOSANT *tableComposants)
@@ -181,7 +278,7 @@ void initComposant(char *pointeur,int indexComposant,COMPOSANT *tableComposants)
 	int pinNonNum = 1;
 	int testTemp;
 
-	strcpy(compoEnCours,tableComposants[indexComposant].nom);
+	strcpy_s(compoEnCours, NAMELEN, tableComposants[indexComposant].nom);
 
 	while(pointeur = strstr(pointeur,".ADD_TER"))
 	{
@@ -189,12 +286,13 @@ void initComposant(char *pointeur,int indexComposant,COMPOSANT *tableComposants)
 
 		while(*pointeur != '\r' && *pointeur != '\n')
 		{
-				pointeur += 9;
-				pointeur += 1 + strcpyBetweenChars(temp, pointeur, ' ');		// On va recup le nom du composant
+				if (*pointeur == '.')
+					while (*pointeur++ != ' ');
+				pointeur += 1 + getToken(temp, pointeur);		// On va recup le nom du composant
 
 				if (!strcmp(compoEnCours, temp))
 				{
-					pointeur += 1 + strcpyBetweenChars(temp, pointeur, ' ');
+					pointeur += 1 + getToken(temp, pointeur);
 
 					for (i = 0, testTemp = 0; temp[testTemp]; testTemp++ )
 					{
@@ -211,13 +309,13 @@ void initComposant(char *pointeur,int indexComposant,COMPOSANT *tableComposants)
 					{
 						printf("Warning: %s (%s), Pin: %s (net: %s) does not use pin number.\n", tableComposants[indexComposant].nom, tableComposants[indexComposant].label, temp, netEnCours);
 						i = pinNonNum++;
-						if (i < PINSMAX) strcpy(tableComposants[indexComposant].pin[i].alias, temp);
+						if (i < PINSMAX) strcpy_s(tableComposants[indexComposant].pin[i].alias, NAMELEN, temp);
 					}
 					if (i >= PINSMAX)
 						printf("ERROR: %s (%s) contains pin numbers exceeding max.: %d\n", tableComposants[indexComposant].nom, tableComposants[indexComposant].label, PINSMAX-1);
 					else
 					{
-						strcpy(tableComposants[indexComposant].pin[i].nom, netEnCours);
+						strcpy_s(tableComposants[indexComposant].pin[i].nom, NAMELEN, netEnCours);
 						if (tableComposants[indexComposant].pin_max < i) tableComposants[indexComposant].pin_max = i;
 					}
 				}
@@ -256,7 +354,24 @@ int strcpyBetweenChars(char *dest, const char *source, char Ch)
 {
 	int len = 0;
 	while (*source++ != Ch) ;
-	while (*source   != Ch && *source != '\n' && len < NAMELEN) { *dest++ = *source++; len++; }
+	while (*source != Ch && *source != '\n' && len < NAMELEN) 
+	{ 
+		*dest++ = *source++; 
+		len++; 
+	}
 	*dest = 0;
 	return len;
 }
+
+int getToken (char *dest, const char *source)
+{
+	int len = 0;
+	while (*source != ' ' && *source != '\r' && *source != '\n' && len < NAMELEN)
+	{
+		*dest++ = *source++;
+		len++;
+	}
+	*dest = 0;
+	return len;
+}
+
